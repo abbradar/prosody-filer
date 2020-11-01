@@ -37,6 +37,7 @@ type Config struct {
 
 var conf Config
 var versionString string = "0.0.0"
+
 const ALLOWED_METHODS string = "OPTIONS, HEAD, GET, PUT"
 
 /*
@@ -48,6 +49,26 @@ func addCORSheaders(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 	w.Header().Set("Access-Control-Allow-Credentials", "true")
 	w.Header().Set("Access-Control-Max-Age", "7200")
+}
+
+func addContentHeaders(w http.ResponseWriter, fileStorePath string) {
+	/*
+	 * Find out the content type to sent correct header. There is a Go function for retrieving the
+	 * MIME content type, but this does not work with encrypted files (=> OMEMO). Therefore we're just
+	 * relying on file extensions.
+	 */
+	contentType := mime.TypeByExtension(filepath.Ext(fileStorePath))
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", contentType)
+	if !(strings.HasPrefix(contentType, "image/") || strings.HasPrefix(contentType, "video/") || strings.HasPrefix(contentType, "audio/") || contentType == "text/plain") {
+		w.Header().Set("Content-Disposition", "attachment")
+	}
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'")
+	w.Header().Set("X-Content-Security-Policy", "default-src 'none'")
+	w.Header().Set("X-WebKit-CSP", "default-src 'none'")
 }
 
 /*
@@ -129,26 +150,16 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		/*
-		 * Find out the content type to sent correct header. There is a Go function for retrieving the
-		 * MIME content type, but this does not work with encrypted files (=> OMEMO). Therefore we're just
-		 * relying on file extensions.
-		 */
-		contentType := mime.TypeByExtension(filepath.Ext(fileStorePath))
 		w.Header().Set("Content-Length", strconv.FormatInt(fileinfo.Size(), 10))
-		w.Header().Set("Content-Type", contentType)
+		addContentHeaders(w, fileStorePath)
 	} else if r.Method == "GET" {
-		contentType := mime.TypeByExtension(filepath.Ext(fileStorePath))
 		if f, err := os.Stat(conf.Storedir + fileStorePath); err != nil || f.IsDir() {
 			log.Println("Directory listing forbidden!")
 			http.Error(w, "403 Forbidden", 403)
 			return
 		}
-		if contentType == "" {
-			contentType = "application/octet-stream"
-		}
+		addContentHeaders(w, fileStorePath)
 		http.ServeFile(w, r, conf.Storedir+fileStorePath)
-		w.Header().Set("Content-Type", contentType)
 	} else if r.Method == "OPTIONS" {
 		w.Header().Set("Allow", ALLOWED_METHODS)
 		return
